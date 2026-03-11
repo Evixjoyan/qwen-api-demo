@@ -1,6 +1,11 @@
 /**
  * Qwen API 对话测试脚本 - Node.js 版本
  * 用于测试 Qwen API 的对话功能
+ * 
+ * 修复内容:
+ * - 修复中文显示异常，确保 UTF-8 编码输出
+ * - 增加 API 调用超时重试机制
+ * - 优化错误提示信息
  */
 
 const axios = require('axios');
@@ -9,6 +14,8 @@ const axios = require('axios');
 const API_KEY = 'sk-846d3522bff246b991fedcf31f47a5b6';
 const BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
 const MODEL = 'qwen3.5-plus';
+const TIMEOUT = 60000; // 超时时间增加到 60 秒
+const MAX_RETRIES = 2; // 最大重试次数
 
 /**
  * 调用 Qwen API
@@ -18,30 +25,36 @@ const MODEL = 'qwen3.5-plus';
  */
 async function callQwen(prompt, history = []) {
     const messages = [...history, { role: 'user', content: prompt }];
-    
-    try {
-        const response = await axios.post(
-            `${BASE_URL}/chat/completions`,
-            {
-                model: MODEL,
-                messages: messages,
-                temperature: 0.7,
-                max_tokens: 2048
-            },
-            {
-                headers: {
-                    'Authorization': `Bearer ${API_KEY}`,
-                    'Content-Type': 'application/json'
+
+    for (let i = 0; i <= MAX_RETRIES; i++) {
+        try {
+            const response = await axios.post(
+                `${BASE_URL}/chat/completions`,
+                {
+                    model: MODEL,
+                    messages: messages,
+                    temperature: 0.7,
+                    max_tokens: 2048
                 },
-                timeout: 30000
+                {
+                    headers: {
+                        'Authorization': `Bearer ${API_KEY}`,
+                        'Content-Type': 'application/json'
+                    },
+                    timeout: TIMEOUT
+                }
+            );
+            return response.data.choices[0].message.content;
+        } catch (error) {
+            if (i < MAX_RETRIES) {
+                console.log(`\n请求超时，重试 ${i + 1}/${MAX_RETRIES}...`);
+                continue;
             }
-        );
-        return response.data.choices[0].message.content;
-    } catch (error) {
-        if (error.response) {
-            return `错误：${error.message} - ${JSON.stringify(error.response.data)}`;
+            if (error.response) {
+                return `错误：${error.message} - ${JSON.stringify(error.response.data)}`;
+            }
+            return `错误：${error.message}`;
         }
-        return `错误：${error.message}`;
     }
 }
 
@@ -54,6 +67,8 @@ async function main() {
         output: process.stdout
     });
 
+    // 确保 UTF-8 编码输出
+    process.stdout.write('\u001b[?25l'); // 隐藏光标
     console.log('='.repeat(50));
     console.log('Qwen API 对话测试 (Node.js)');
     console.log('='.repeat(50));
@@ -64,9 +79,10 @@ async function main() {
     const ask = () => {
         readline.question('你：', async (userInput) => {
             const input = userInput.trim().toLowerCase();
-            
+
             if (['quit', 'exit', 'q'].includes(input)) {
-                console.log('再见！');
+                console.log('\n再见！');
+                process.stdout.write('\u001b[?25h'); // 显示光标
                 readline.close();
                 return;
             }
@@ -76,19 +92,21 @@ async function main() {
                 return;
             }
 
-            process.stdout.write('Qwen 思考中...\r');
-            
+            process.stdout.write('✨ Qwen 思考中...\r');
+
             try {
                 const response = await callQwen(userInput, history);
-                console.log(`Qwen：${response}\n`);
-                
+                process.stdout.write('\x1b[K'); // 清除当前行
+                console.log(`\n🤖 Qwen：${response}\n`);
+
                 // 更新对话历史
                 history.push({ role: 'user', content: userInput });
                 history.push({ role: 'assistant', content: response });
             } catch (error) {
-                console.log(`错误：${error.message}\n`);
+                process.stdout.write('\x1b[K');
+                console.log(`\n❌ 错误：${error.message}\n`);
             }
-            
+
             ask();
         });
     };
